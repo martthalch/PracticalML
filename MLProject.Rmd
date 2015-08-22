@@ -1,0 +1,146 @@
+---
+title: "Prcatical Machine Learning Project- Analyzing Weight Lifting Exercises Dataset"
+author: "Martha Laguna"
+date: "August 22, 2015"
+output: html_document
+---
+
+##Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+##Analyzing the Data and Cleaning the Data
+The first step we need to do in order to facilitate our predictions will be to load the needed libraries, download the data and do a quick cleanup. 
+When creating our data frame we need to make sure we eliminate does strings that will invalidate a further analysis and that in reality are "NA".
+
+```{r, warning=F, message=F}
+library(caret)
+library(rattle)
+library (ggplot2)
+library (randomForest)
+library(rpart)
+library (rpart.plot)
+library(klaR)
+
+#Download files 
+#download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "training.csv")
+#download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "test.csv")
+
+#creata data frames
+training<- data.frame(read.csv("training.csv", na.strings=c("NA","#DIV/0!", "")))
+test<- data.frame(read.csv("test.csv", na.strings=c("NA","#DIV/0!", "")))
+```
+
+Before moving forward it is importan to give a quick look into our data frames and identify any other potential ways of cleaning them up. This process will be key in order to be able to have accurate results.(Note: code below is marked commented to avoid having long results)
+```{r}
+#Analyzing the data
+#summary(training)
+#str(training)
+```
+
+Here we can see that there are a lot of variables that have  mostly "NAs" and that won't be able to provide information in our prediction. In our cleaning process, let's start by eliminating those empty columns and the column that represents the id of the observation.
+
+```{r}
+training<-training[,colSums(is.na(training)) == 0]
+test <-test[,colSums(is.na(test)) == 0]
+training<-training[,-which(names(training)%in% c("X"))]
+test <-test[,-which(names(test)%in% c("X"))]
+test<- test[,- which(names(test)%in% c("problem_id"))]
+```
+
+Now, as a last step of cleaning the data. Let's identify those variables that have low variability and remove them from the data set. Variables with low variability will not provide information for our prediction, so is better if we remove the noise. In this case, we have identified "new_window" as a variable that can be eliminated. 
+```{r}
+nsv<- nearZeroVar(training, saveMetrics = TRUE) 
+nsv<- subset(nsv,nsv$zeroVar==TRUE | nsv$nzv== TRUE)
+nsv
+nsv2<-c ("new_window")
+training<- training[,- which(names(training)%in% nsv2)]
+test<- test[,- which(names(test)%in% nsv2)]
+```
+
+With all the cleaning steps, now let's just make sure there is consistency in our 2 datasets by coercing the data. And comparing that we have the same columns in both data sets. The second piece of code below will give us the amount of columns that are different.
+
+```{r}
+#Coerce data
+for (i in 1:length(test) ) {
+  for(j in 1:length(training)) {
+    if( length( grep(names(training[i]), names(test)[j]) ) ==1)  {
+      class(test[j]) <- class(training[i])
+    }      
+  }      
+}
+train2<-training[,-58]
+d<- data.frame(cbind(names(test), names(train2)))
+
+e<-0
+for (i in 1:nrow(d)){
+  if(d[i,1] != d[i,2]){
+    e<- e + 1
+  } 
+  #print(1)
+}
+e
+```
+As we can see we have the same columns in both sets. 
+
+##Cross Validation
+In order to build a good prediction model we need to split our training data in 2 sections. In this case we are going to take 75% fo the data to build a model and the rest we'll use to test the model. In order to be able to have reproductible results we'll start by setting a seed.
+```{r}
+#setting seed to be able to reproduce results
+set.seed(1506)
+
+#Cross validation
+inTrain<- createDataPartition(y=training$classe, p=.75, list= FALSE)
+subTraining<- training[inTrain,]
+subTesting<- training[-inTrain,]
+```
+
+##building a prediction model
+Internally we did some analysis with possible prediction models, but in this paper we'll go through the ones that had the highest leel of accuracy only. 
+We'll start with the LDA model. In order to define the accuracy of this model we need to run the model against our test data we split from our cross validation exercise.
+As you can see below, is the confusion matrix we can see that 15% of the preduictions were not accurate. Eventhough 85% is high accuracy, we'll try to mind a model with a higher level of accuracy.
+
+```{r, warning=F, message=F}
+#using lda method we get 85% accuracy
+modFit<-train(classe~., method="lda", data=subTraining)
+pa<- predict(modFit,subTesting)
+confusionMatrix(pa,subTesting$classe)
+#predict with lda
+plda<- predict(modFit,test)
+
+```
+
+The second model we'll explore is the Random Forest model. We'll run the same steps we ran for the LDA model and create a confusion matrix against our cross validation test data. In this model, as you can see, the level of accuracy is over 99%. With this level of accuracy, there really is no need to keep exploring other models since is really less likely we'll find something with that high level of accuracy,
+
+When running the RF method in caret, it takes high amounts of time, so we'll use the rain forest library for this analysis. In order to use this library we need to make sure that we have the same factor levels in our test data than our training data, so we had to apply a simple code below to enable that for the analysis. 
+```{r, warning=F, message=F}
+modFit2<-randomForest(classe ~. , data=subTraining)
+pa2<- predict(modFit2,subTesting)
+confusionMatrix(pa2,subTesting$classe)
+
+#predict with rf
+nums<-sapply(training, is.factor)
+factorVar<-names(training[,nums])
+levels(test$user_name)<-levels(training$user_name)
+levels(test$cvtd_timestamp)<-levels(training$cvtd_timestamp)
+prf<- predict(modFit2,test)
+```
+
+Since RF is the level that provide the highest level of acuracy, we'll use it for our predictions and submission. Below is the code we have used to create all the files for the submissions, 
+
+```{r}
+#rf submission script
+answers = rep("A", 20)
+pml_write_files = function(prf){
+  n = length(prf)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(prf[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+
+```
+
+##Conclusion
+Rain Forest prediction model seems to be the one that can ensure better quality of the results. 
